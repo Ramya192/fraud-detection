@@ -6,7 +6,7 @@ bank transactions using LLMs, prompt engineering, and agentic workflows.
 Built by Ramya | Project A
 
 ## Live Demo
-[Click here to try the live app](#) ← update after deployment
+[Click here to try the live app](https://fraud-detection-system-projecta.streamlit.app)
 
 ## Problem Statement
 Credit card fraud costs banks billions annually. Traditional 
