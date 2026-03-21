@@ -1,0 +1,11 @@
+langchain
+langchain-openai
+crewai
+python-dotenv
+pandas
+numpy
+faiss-cpu
+streamlit
+openai-whisper
+pillow
+pytest

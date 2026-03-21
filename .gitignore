@@ -1,0 +1,25 @@
+# Secret keys — NEVER commit these
+.env
+
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Data files — too large for GitHub
+data/creditcard.csv
+
+# Virtual environment
+venv/
+env/
+.venv/
+
+# VS Code settings
+.vscode/
+
+# Test cache
+.pytest_cache/
+
+# Streamlit cache
+.streamlit/
