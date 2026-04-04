@@ -1,3 +1,4 @@
+import time
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 from config.settings import OPENAI_API_KEY, MODEL_NAME
@@ -5,10 +6,13 @@ from config.settings import OPENAI_API_KEY, MODEL_NAME
 
 class RoutingAgent:
 
+    MAX_RETRIES = 2
+    RETRY_DELAY = 3   # seconds between retries
+
     def __init__(self, name):
         self.name = name
-        self.routes_made = 0
-        self.it_routes = 0
+        self.routes_made  = 0
+        self.it_routes    = 0
         self.fraud_routes = 0
         self.support_routes = 0
         self.llm = ChatOpenAI(
@@ -47,28 +51,42 @@ class RoutingAgent:
         Action Required: <what the department should do>
         """
 
-        try:
-            messages = [
-                SystemMessage(content="You are a bank routing system. Route cases to correct departments."),
-                HumanMessage(content=prompt)
-            ]
-            response = self.llm.invoke(messages)
+        messages = [
+            SystemMessage(content="You are a bank routing system. Route cases to correct departments."),
+            HumanMessage(content=prompt)
+        ]
 
-            # Track department counts
-            result = response.content
-            if "IT" in result.split('\n')[0]:
-                self.it_routes += 1
-            elif "FRAUD" in result.split('\n')[0]:
-                self.fraud_routes += 1
-            else:
-                self.support_routes += 1
+        # ── Retry logic ────────────────────────────────────────────────
+        for attempt in range(1, self.MAX_RETRIES + 1):
+            try:
+                response = self.llm.invoke(messages)
+                result   = response.content
 
-            return result
+                # Track department counts
+                first_line = result.split('\n')[0].upper()
+                if "IT" in first_line:
+                    self.it_routes += 1
+                elif "FRAUD" in first_line:
+                    self.fraud_routes += 1
+                else:
+                    self.support_routes += 1
 
-        except Exception as e:
-            print(f"  [RoutingAgent ERROR] {e}")
-            self.fraud_routes += 1
-            return "Department: FRAUD\nPriority: MEDIUM\nReason: Routing failed — defaulting to Fraud team\nAction Required: Manual review"
+                return result
+
+            except Exception as e:
+                print(f"  [RoutingAgent] Attempt {attempt}/{self.MAX_RETRIES} failed: {e}")
+                if attempt < self.MAX_RETRIES:
+                    print(f"  [RoutingAgent] Retrying in {self.RETRY_DELAY}s...")
+                    time.sleep(self.RETRY_DELAY)
+                else:
+                    print(f"  [RoutingAgent] All retries exhausted.")
+                    self.fraud_routes += 1
+                    return (
+                        "Department: FRAUD\n"
+                        "Priority: MEDIUM\n"
+                        "Reason: Routing failed — defaulting to Fraud team\n"
+                        "Action Required: Manual review"
+                    )
 
     def status(self):
         print(f"{self.name} made {self.routes_made} routing decisions")
