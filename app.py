@@ -203,16 +203,25 @@ with tab2:
     st.subheader("Analyse a single transaction manually")
     st.caption("Enter transaction details to get instant fraud assessment through the full 4-agent pipeline")
 
+    # Reset button — clears session state and reloads defaults
+    if st.button("↺ Reset to defaults"):
+        for key in ["manual_amount", "manual_hour"]:
+            if key in st.session_state:
+                del st.session_state[key]
+        st.rerun()
+
     col1, col2 = st.columns(2)
 
     with col1:
         amount = st.number_input(
             "Transaction Amount ($)",
-            min_value=0.0, max_value=100000.0, value=250.0, step=0.01
+            min_value=0.0, max_value=100000.0, value=250.0, step=0.01,
+            key="manual_amount"
         )
         hour = st.slider(
             "Hour of transaction (0=midnight, 23=11pm)",
-            min_value=0, max_value=23, value=14
+            min_value=0, max_value=23, value=14,
+            key="manual_hour"
         )
 
     with col2:
