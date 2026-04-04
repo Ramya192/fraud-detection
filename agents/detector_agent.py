@@ -14,6 +14,8 @@ from tools.ml_scorer import MLScorer
 
 class FraudDetectorAgent:
 
+    VALID_RISK_LEVELS = {"LOW", "MEDIUM", "HIGH"}
+
     def __init__(self, name):
         self.name = name
         self.cases_reviewed = 0
@@ -22,45 +24,96 @@ class FraudDetectorAgent:
             api_key=OPENAI_API_KEY,
             temperature=0
         )
-        # ML scorer trains on startup — once, not per transaction
         print("  [DetectorAgent] Loading ML scorer...")
         self.scorer = MLScorer(data_path="data/transactions_balanced.csv")
 
+    # ── IMPROVEMENT 4: Robust response parser ───────────────────────────
+    # Replaces fragile `"HIGH" in response` string search.
+    # Extracts Risk Level, Action, and Reason from the LLM response safely.
+    @staticmethod
+    def parse_response(response: str) -> dict:
+        """
+        Parses structured LLM response into a dict with keys:
+          risk_level : "LOW" | "MEDIUM" | "HIGH" | "UNKNOWN"
+          action     : "APPROVE" | "FLAG" | "BLOCK" | "UNKNOWN"
+          reason     : str
+
+        Handles variations in:
+          - capitalisation  (high / High / HIGH)
+          - extra whitespace or punctuation
+          - missing fields (returns "UNKNOWN" safely)
+          - extra text before/after the value
+        """
+        result = {"risk_level": "UNKNOWN", "action": "UNKNOWN", "reason": ""}
+
+        for line in response.strip().splitlines():
+            line = line.strip()
+            lower = line.lower()
+
+            if lower.startswith("risk level"):
+                # Extract everything after the first colon
+                parts = line.split(":", 1)
+                if len(parts) == 2:
+                    value = parts[1].strip().upper()
+                    # Take only the first word in case of extra text
+                    first_word = value.split()[0].rstrip(".,;") if value else ""
+                    if first_word in FraudDetectorAgent.VALID_RISK_LEVELS:
+                        result["risk_level"] = first_word
+                    else:
+                        result["risk_level"] = "UNKNOWN"
+
+            elif lower.startswith("action"):
+                parts = line.split(":", 1)
+                if len(parts) == 2:
+                    value = parts[1].strip().upper()
+                    first_word = value.split()[0].rstrip(".,;") if value else ""
+                    if first_word in {"APPROVE", "FLAG", "BLOCK"}:
+                        result["action"] = first_word
+                    else:
+                        result["action"] = "FLAG"   # safe default
+
+            elif lower.startswith("reason"):
+                parts = line.split(":", 1)
+                if len(parts) == 2:
+                    result["reason"] = parts[1].strip()
+
+        return result
+
+    @staticmethod
+    def is_fraud(parsed: dict) -> bool:
+        """
+        Returns True if the parsed response indicates fraud.
+        MEDIUM and HIGH both count as fraud — safer for a fraud detection system.
+        UNKNOWN defaults to True (fail safe — flag rather than miss fraud).
+        """
+        return parsed["risk_level"] in {"MEDIUM", "HIGH", "UNKNOWN"}
+
     # ── LAYER 1: Rule-based pre-filter ──────────────────────────────────
-    # Catches obvious fraud BEFORE calling ML or LLM.
-    # Returns a ready-made response string if a rule fires, else None.
     def rule_based_filter(self, transaction):
         amount = transaction.get("Amount", 0)
         hour   = transaction.get("hour", 12)
 
-        # Rule 1: Exactly $0.00 — card verification attack
         if amount == 0.0:
             return (
                 "Risk Level: HIGH\n"
                 "Reason: Zero-dollar transaction indicates a card verification attack.\n"
                 "Action: BLOCK"
             )
-
-        # Rule 2: Micro-transaction at night — card testing
         if 0 < amount <= 5.0 and 0 <= hour <= 5:
             return (
                 "Risk Level: HIGH\n"
                 "Reason: Micro-transaction during night hours — classic card-testing pattern.\n"
                 "Action: BLOCK"
             )
-
-        # Rule 3: Very high amount at night
         if amount > 1000 and 0 <= hour <= 5:
             return (
                 "Risk Level: HIGH\n"
                 "Reason: Large transaction amount during overnight hours is highly suspicious.\n"
                 "Action: BLOCK"
             )
-
-        return None   # no rule fired
+        return None
 
     # ── LAYER 2: ML fast-path ────────────────────────────────────────────
-    # Returns a ready-made response string for clear cases, else None.
     def ml_filter(self, transaction):
         score = self.scorer.score(transaction)
 
@@ -70,22 +123,18 @@ class FraudDetectorAgent:
                 f"Reason: ML model fraud probability {score:.0%} — strongly matches fraud patterns in training data.\n"
                 f"Action: BLOCK"
             )
-
         if score <= MLScorer.LEGIT_THRESHOLD:
             return (
                 f"Risk Level: LOW\n"
                 f"Reason: ML model fraud probability {score:.0%} — strongly matches legitimate transaction patterns.\n"
                 f"Action: APPROVE"
             )
-
-        # Borderline — return None so LLM takes over
         return None
 
     # ── LAYER 3: LLM prompt (borderline cases only) ──────────────────────
     def build_prompt(self, transaction, context=None, ml_score=None):
         context_str = context if context else "No historical context available"
 
-        # Include ML score as a hint when available
         ml_hint = ""
         if ml_score is not None:
             ml_hint = f"""
@@ -117,7 +166,7 @@ class FraudDetectorAgent:
             - Hour of day: {transaction['hour']} (0=midnight, 23=11pm)
             - Time since first transaction: {transaction['Time']} seconds
 
-            Respond in exactly this format:
+            Respond in EXACTLY this format (no extra text):
             Risk Level: <LOW/MEDIUM/HIGH>
             Reason: <one sentence>
             Action: <APPROVE/FLAG/BLOCK>
@@ -137,7 +186,7 @@ class FraudDetectorAgent:
         if ml_result:
             return ml_result
 
-        # Layer 3: LLM — only for borderline cases
+        # Layer 3: LLM — borderline only
         ml_score = self.scorer.score(transaction)
         try:
             messages = [

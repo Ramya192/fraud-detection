@@ -60,12 +60,12 @@ with st.sidebar:
     st.markdown("- Score ≤ 0.3 → LOW (APPROVE)")
 
 # ── CONTEXT FOR AGENTS ───────────────────────────────────────
-df_full = pd.read_csv("data/transactions_balanced.csv")
+df_full    = pd.read_csv("data/transactions_balanced.csv")
 avg_amount = df_full["Amount"].mean()
 max_amount = df_full["Amount"].max()
-context = (f"Dataset average transaction amount: ${avg_amount:.2f}. "
-           f"Maximum amount: ${max_amount:.2f}. "
-           f"Typical legitimate transactions range from $5 to $500.")
+context    = (f"Dataset average transaction amount: ${avg_amount:.2f}. "
+              f"Maximum amount: ${max_amount:.2f}. "
+              f"Typical legitimate transactions range from $5 to $500.")
 
 # ── INPUT TABS ────────────────────────────────────────────────
 tab1, tab2 = st.tabs(["📂 Upload CSV", "✏️ Manual Entry"])
@@ -81,8 +81,7 @@ with tab1:
         df = pd.read_csv(uploaded_file)
         st.success(f"Loaded {len(df)} transactions")
 
-        # Show which feature columns are present
-        pca_cols = [f"V{i}" for i in range(1, 29)]
+        pca_cols  = [f"V{i}" for i in range(1, 29)]
         found_pca = [c for c in pca_cols if c in df.columns]
         if found_pca:
             st.info(f"✓ PCA features detected: {len(found_pca)} columns (V1–V28) — ML scorer will use full signal")
@@ -94,15 +93,12 @@ with tab1:
         max_txns = min(len(df), 20)
         num_txns = st.slider(
             "Number of transactions to analyse",
-            min_value=1,
-            max_value=max_txns,
-            value=min(5, max_txns)
+            min_value=1, max_value=max_txns, value=min(5, max_txns)
         )
 
         if st.button("🔍 Analyse Transactions", type="primary"):
-            results = []
-            correct = 0
-
+            results     = []
+            correct     = 0
             progress    = st.progress(0)
             status_text = st.empty()
 
@@ -111,20 +107,18 @@ with tab1:
                 status_text.text(f"Analysing transaction {i+1} of {num_txns}...")
                 progress.progress((i + 1) / num_txns)
 
-                # Run detector (rules → ML → LLM)
-                response  = detector.analyse(transaction, context)
+                response = detector.analyse(transaction, context)
 
-                # UPDATED THRESHOLD: MEDIUM and HIGH both count as FRAUD
-                predicted = "FRAUD" if ("HIGH" in response or "MEDIUM" in response) else "LEGITIMATE"
+                # ── IMPROVEMENT 4: Robust parsing ──────────────────────
+                parsed    = FraudDetectorAgent.parse_response(response)
+                predicted = "FRAUD" if FraudDetectorAgent.is_fraud(parsed) else "LEGITIMATE"
 
-                # Get actual label if available
                 actual = None
                 if "is_Fraud" in transaction:
                     actual = "FRAUD" if transaction["is_Fraud"] == 1 else "LEGITIMATE"
                     if predicted == actual:
                         correct += 1
 
-                # Run analyst + router + alert if fraud detected
                 investigation = ""
                 alert_text    = ""
                 routing       = ""
@@ -141,17 +135,14 @@ with tab1:
                     "Hour":        int(transaction.get("hour", 0)),
                     "Predicted":   predicted,
                     "Actual":      actual if actual else "Unknown",
-                    "Risk":        response.split('\n')[0],
-                    "Action":      ("BLOCK"    if "BLOCK"    in investigation else
-                                   "ESCALATE" if "ESCALATE" in investigation else
-                                   "APPROVE"),
+                    "Risk Level":  parsed["risk_level"],
+                    "Action":      parsed["action"],
                     "Routing":     routing.split('\n')[0] if routing else "—"
                 })
 
             progress.empty()
             status_text.empty()
 
-            # ── Results table ─────────────────────────────────
             st.divider()
             st.subheader("Results")
             results_df = pd.DataFrame(results)
@@ -168,7 +159,6 @@ with tab1:
             )
             st.dataframe(styled_df, use_container_width=True)
 
-            # ── Metrics ───────────────────────────────────────
             if any(r["Actual"] != "Unknown" for r in results):
                 st.divider()
                 st.subheader("Performance Metrics")
@@ -186,22 +176,20 @@ with tab1:
                 accuracy  = round(correct / num_txns * 100, 1)
 
                 col1, col2, col3, col4, col5 = st.columns(5)
-                col1.metric("Accuracy",    f"{accuracy}%")
-                col2.metric("Precision",   f"{precision}%")
-                col3.metric("Recall",      f"{recall}%")
+                col1.metric("Accuracy",     f"{accuracy}%")
+                col2.metric("Precision",    f"{precision}%")
+                col3.metric("Recall",       f"{recall}%")
                 col4.metric("Fraud Caught", f"{tp}/{tp+fn}")
                 col5.metric("False Alarms", f"{fp}")
 
-                # Confusion matrix summary
                 with st.expander("Confusion Matrix"):
                     cm_data = {
-                        "":                ["Predicted FRAUD", "Predicted LEGIT"],
-                        "Actual FRAUD":    [f"✓ {tp} (TP)",   f"✗ {fn} (FN)"],
-                        "Actual LEGIT":    [f"✗ {fp} (FP)",   f"✓ {tn} (TN)"]
+                        "":             ["Predicted FRAUD", "Predicted LEGIT"],
+                        "Actual FRAUD": [f"✓ {tp} (TP)",    f"✗ {fn} (FN)"],
+                        "Actual LEGIT": [f"✗ {fp} (FP)",    f"✓ {tn} (TN)"]
                     }
                     st.table(pd.DataFrame(cm_data).set_index(""))
 
-            # ── Download ──────────────────────────────────────
             st.divider()
             st.download_button(
                 label="⬇ Download Results as CSV",
@@ -220,23 +208,17 @@ with tab2:
     with col1:
         amount = st.number_input(
             "Transaction Amount ($)",
-            min_value=0.0,
-            max_value=100000.0,
-            value=250.0,
-            step=0.01
+            min_value=0.0, max_value=100000.0, value=250.0, step=0.01
         )
         hour = st.slider(
             "Hour of transaction (0=midnight, 23=11pm)",
-            min_value=0,
-            max_value=23,
-            value=14
+            min_value=0, max_value=23, value=14
         )
 
     with col2:
         st.info(f"Amount: ${amount:.2f}")
         st.info(f"Hour: {hour}:00 {'AM' if hour < 12 else 'PM'}")
 
-        # Live risk preview
         if amount == 0:
             st.warning("⚠ Zero amount — likely card verification attack")
         elif hour <= 5 and amount > 1000:
@@ -249,38 +231,29 @@ with tab2:
             st.success("✓ Normal transaction parameters")
 
     if st.button("🔍 Analyse This Transaction", type="primary"):
-        transaction = {
-            "Amount": amount,
-            "hour":   hour,
-            "Time":   50000
-        }
+        transaction = {"Amount": amount, "hour": hour, "Time": 50000}
 
         with st.spinner("Running through hybrid detection pipeline..."):
+            response = detector.analyse(transaction, context)
 
-            # Layer 1–3: Detector (rules → ML → LLM)
-            response  = detector.analyse(transaction, context)
-
-            # UPDATED THRESHOLD: MEDIUM and HIGH both count as FRAUD
-            predicted = "FRAUD" if ("HIGH" in response or "MEDIUM" in response) else "LEGITIMATE"
+            # ── IMPROVEMENT 4: Robust parsing ──────────────────────────
+            parsed    = FraudDetectorAgent.parse_response(response)
+            predicted = "FRAUD" if FraudDetectorAgent.is_fraud(parsed) else "LEGITIMATE"
 
             st.divider()
 
-            # Result banner
             if predicted == "FRAUD":
                 st.error("🚨 FRAUD DETECTED")
             else:
                 st.success("✅ LEGITIMATE TRANSACTION")
 
-            # Detector report
             with st.expander("🔍 Detector Agent Report", expanded=True):
-                for line in response.strip().split('\n'):
-                    if line.strip():
-                        st.text(line)
+                st.text(f"Risk Level : {parsed['risk_level']}")
+                st.text(f"Action     : {parsed['action']}")
+                st.text(f"Reason     : {parsed['reason']}")
 
-            # Analyst + Router + Alert
             if predicted == "FRAUD":
                 investigation = analyst.investigate(transaction, response)
-
                 with st.expander("🔬 Analyst Agent Investigation"):
                     st.text(investigation)
 
