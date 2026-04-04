@@ -1,83 +1,99 @@
-# Agentic Fraud Detection System
+# 🔍 Fraud Detection Multi-Agent System
+**Project A — Agentic AI Portfolio | Built by Ramya | 2026**
 
-A production-style multi-agent AI system for detecting fraudulent 
-bank transactions using LLMs, prompt engineering, and agentic workflows.
+A production-grade fraud detection system combining a hybrid ML + LLM pipeline with a 4-agent architecture. Built as part of the IITM Pravartak Advanced PG Certificate in Agentic AI.
 
-Built by Ramya | Project A
+---
 
-## Live Demo
-[Click here to try the live app](https://fraud-detection-system-projecta.streamlit.app)
+## 🏗 Architecture
 
-## Problem Statement
-Credit card fraud costs banks billions annually. Traditional 
-rule-based systems miss sophisticated fraud patterns. This system 
-uses 3 specialised AI agents working in a triage pipeline to detect, 
-investigate, and alert on fraudulent transactions.
-
-## Architecture
 ```
-Transaction Input (CSV / Voice / Image)
-           ↓
-   DetectorAgent
-   Fast screening — HIGH/MEDIUM/LOW risk
-           ↓ (if HIGH)
-   AnalystAgent  
-   Deep investigation — fraud pattern + risk factors
-           ↓ (if BLOCK recommended)
-   AlertAgent
-   Formal bank notification with severity + actions
-           ↓
-   Bank Officer — reviews structured alert
+Transaction Input
+        │
+        ▼
+┌─────────────────────┐
+│  Rule-based Filter  │  ← Zero-dollar, micro-txn at night, large overnight
+└─────────────────────┘
+        │ no rule fired
+        ▼
+┌─────────────────────┐
+│  ML Scorer          │  ← Random Forest on V1–V28 + Amount + Time + hour
+│  (Random Forest)    │    score ≥ 0.7 → HIGH (BLOCK)
+│                     │    score ≤ 0.3 → LOW  (APPROVE)
+│                     │    score 0.3–0.7 → BORDERLINE → LLM
+└─────────────────────┘
+        │ borderline only
+        ▼
+┌─────────────────────┐
+│  LLM DetectorAgent  │  ← GPT reasons on Amount, hour, Time + ML score hint
+│  (GPT-4)            │
+└─────────────────────┘
+        │
+        ▼
+   FRAUD / LEGIT
+        │
+   if FRAUD
+        ▼
+┌─────────────────────┐
+│  AnalystAgent       │  ← Deep investigation, recommends BLOCK / ESCALATE
+└─────────────────────┘
+        │
+        ▼
+┌─────────────────────┐
+│  RoutingAgent       │  ← Routes to Fraud Dept / IT / General Support
+└─────────────────────┘
+        │ if BLOCK
+        ▼
+┌─────────────────────┐
+│  AlertAgent         │  ← Generates formal bank alert notification
+└─────────────────────┘
 ```
 
-## Key Features
-- 3-agent triage pipeline (Detector → Analyst → Alert)
-- Multi-modal inputs: CSV upload, voice, receipt image
-- Real-time precision/recall metrics dashboard
-- Prompt engineered through 3 iterations
-- Production-grade error handling on all agent calls
-- Downloadable results as CSV
+---
 
-## Performance Metrics
-| Metric | Value |
-|--------|-------|
-| Precision | 88.9% |
-| Recall | 32.0% |
-| Dataset | 284,807 transactions (Kaggle) |
-| Fraud rate | 0.17% |
+## 📈 Performance — Metrics Progression
 
-## Tech Stack
-- Python 3.13
-- LangChain + LangChain-OpenAI
-- OpenAI GPT-4o-mini
-- Streamlit
-- Pandas
-- Pytest
+| Version | Recall | Precision | Accuracy | Notes |
+|---|---|---|---|---|
+| LLM only (10 txns) | 60% | 75% | 70% | Baseline |
+| LLM only (50 txns) | 32% | 88.9% | 64% | Scaled up |
+| + Rules + MEDIUM threshold | 44% | 84.6% | 68% | Improvements 1–3 |
+| **Hybrid RF + LLM (50 txns)** | **100%** | **100%** | **100%** | **Final** |
 
-## Project Structure
+**Key insight:** LLM-only detection on PCA features has an inherent ceiling — the LLM cannot interpret abstract PCA numbers the way a trained classifier can. The hybrid approach uses each tool for what it does best: ML for pattern recognition, LLM for explainability and borderline reasoning.
+
+---
+
+## 🗂 Project Structure
+
 ```
-fraud_detection/
+fraud-detection/
 ├── agents/
-│   ├── detector_agent.py   # screens all transactions
-│   ├── analyst_agent.py    # investigates flagged ones
-│   └── alert_agent.py      # generates formal alerts
+│   ├── detector_agent.py     # Hybrid: Rules → ML → LLM
+│   ├── analyst_agent.py      # Deep investigation
+│   ├── alert_agent.py        # Formal bank alert generation
+│   └── routing_agent.py      # Department routing
 ├── tools/
-│   ├── voice_input.py      # Whisper voice processing
-│   └── image_input.py      # GPT-4V receipt reading
-├── data/
-│   └── transactions_balanced.csv
-├── tests/
-│   └── test_agents.py      # 6 pytest tests
+│   ├── ml_scorer.py          # Random Forest scorer (V1–V28)
+│   └── image_input.py        # GPT-4V image transaction extraction
 ├── config/
-│   └── settings.py
-├── app.py                  # Streamlit dashboard
-├── main.py                 # batch pipeline
+│   └── settings.py           # API keys, model name, thresholds
+├── data/
+│   ├── creditcard.csv        # Original Kaggle dataset (284,807 txns)
+│   ├── transactions_balanced.csv  # Balanced dataset (984 txns, all features)
+│   └── prepare_data.py       # Script to rebuild balanced dataset
+├── tests/
+│   └── test_agents.py        # pytest test suite (6 tests)
+├── app.py                    # Streamlit dashboard
+├── main.py                   # CLI pipeline runner
 └── requirements.txt
 ```
 
-## Setup Instructions
+---
 
-### 1. Clone the repository
+## ⚙️ Setup
+
+### 1. Clone the repo
 ```bash
 git clone https://github.com/Ramya192/fraud-detection.git
 cd fraud-detection
@@ -89,29 +105,73 @@ pip install -r requirements.txt
 ```
 
 ### 3. Set up environment variables
-```bash
-cp .env.example .env
-# Add your OpenAI API key to .env
+Create a `.env` file in the project root:
+```
+OPENAI_API_KEY=your_openai_api_key_here
 ```
 
-### 4. Download dataset
-Download `creditcard.csv` from 
-[Kaggle Credit Card Fraud Dataset](https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud)
-and place in `data/` folder.
+### 4. Prepare the dataset
+Download `creditcard.csv` from [Kaggle Credit Card Fraud Dataset](https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud) and place it in `data/`. Then run:
+```bash
+python data/prepare_data.py
+```
+This rebuilds `transactions_balanced.csv` with all V1–V28 features preserved.
 
-### 5. Run the dashboard
+### 5. Run the CLI pipeline
+```bash
+python main.py
+```
+
+### 6. Launch the Streamlit dashboard
 ```bash
 streamlit run app.py
 ```
 
-### 6. Run tests
-```bash
-pytest tests/ -v
+---
+
+## 📦 Requirements
+
+```
+langchain
+langchain-openai
+openai
+streamlit
+pandas
+scikit-learn>=1.6.0
+python-dotenv
+pytest
 ```
 
-## What I Learned
-- Multi-agent system design using triage pattern
-- Prompt engineering through iterative refinement
-- Precision-recall tradeoff in imbalanced datasets
-- Production-grade error handling for AI pipelines
-- Multi-modal AI: text, voice, and image processing
+---
+
+## 🔑 Key Design Decisions
+
+**Why Hybrid ML + LLM?**
+The Kaggle Credit Card Fraud dataset uses PCA-transformed features (V1–V28) that encode real behavioural patterns but are not human-interpretable. A Random Forest trained on these features can classify them with high accuracy. The LLM is reserved for borderline cases where human-style reasoning over context adds value — reflecting how real BFSI fraud systems work.
+
+**Why 4 Agents?**
+Each agent has a single responsibility matching real bank operations: detection → investigation → routing → notification. This separation makes the system auditable, testable, and extensible.
+
+**Why Balanced Dataset?**
+The original dataset is heavily imbalanced (0.17% fraud). Balancing to 50/50 prevents the model from learning to always predict legitimate. The `prepare_data.py` script handles this reproducibly.
+
+---
+
+## 🧪 Tests
+
+```bash
+pytest tests/test_agents.py -v
+```
+
+---
+
+## 🚀 Live Demo
+
+[Streamlit Cloud Deployment](https://fraud-detection.streamlit.app)
+
+---
+
+## 👩‍💻 Author
+
+**Ramya** — Mainframe professional transitioning to Agentic AI   
+Target: Agentic AI Developer roles at BFSI firms and Big Tech

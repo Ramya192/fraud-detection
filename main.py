@@ -10,6 +10,7 @@ from agents.analyst_agent import AnalystAgent
 from agents.alert_agent import AlertAgent
 from config.settings import RISK_THRESHOLD, MODEL_NAME
 from tools.image_input import ImageInputTool
+from agents.routing_agent import RoutingAgent
 import json
 
 print("Model:", MODEL_NAME)
@@ -20,14 +21,15 @@ print("Risk Threshold:", RISK_THRESHOLD)
 df = pd.read_csv("data/transactions_balanced.csv")
 
 # Pick 5 Fraud + 5 Legitimate transactions
-fraud_sample = df[df["is_Fraud"] ==1].head(25)
-legit_sample = df[df["is_Fraud"] ==0].head(25)
+fraud_sample = df[df["is_Fraud"] == 1].head(25)
+legit_sample = df[df["is_Fraud"] == 0].head(25)
 test_df = pd.concat([fraud_sample, legit_sample]).reset_index(drop=True)
 
 # Create Agent
 agent = FraudDetectorAgent(name="DetectorAgent-1")
 analyst = AnalystAgent(name="AnalystAgent-1")
 alert_agent = AlertAgent(name="AlertAgent-1")
+router = RoutingAgent(name="RoutingAgent-1")
 
 avg_amount = df["Amount"].mean()
 max_amount = df["Amount"].max()
@@ -46,12 +48,12 @@ for index, row in test_df.iterrows():
     transaction = row.to_dict()
     actual = "FRAUD" if transaction["is_Fraud"] == 1 else "LEGITIMATE"
 
-
     # get agent response
     response = agent.analyse(transaction, context)
 
-    # Check if Agent said HIGH RISK
-    if "HIGH" in response:
+    # IMPROVEMENT 3: Lower threshold — flag MEDIUM and HIGH as FRAUD
+    # Previously only "HIGH" was treated as FRAUD, missing borderline cases
+    if "HIGH" in response or "MEDIUM" in response:
         predicted = "FRAUD"
     else:
         predicted = "LEGITIMATE"
@@ -74,11 +76,11 @@ for index, row in test_df.iterrows():
 
     # print Result
     status = "✓ CORRECT" if is_correct else "✗ WRONG"
-    print(f"Txn {index +1}: $ {transaction["Amount"]:>8.2f} |"
-          f"Hour: {int(transaction["hour"]):>2} |"
+    print(f"Txn {index + 1}: $ {transaction['Amount']:>8.2f} |"
+          f"Hour: {int(transaction['hour']):>2} |"
           f"Actual: {actual:<12} | "
           f"Predicted: {predicted:<12} | {status}")
-    
+
     if predicted == "FRAUD":
         print(f"\n >>> ESCALATING TO ANALYST AGENT...")
         investigation = analyst.investigate(transaction, response)
@@ -86,12 +88,24 @@ for index, row in test_df.iterrows():
         for line in investigation.split("\n"):
             if line.strip():
                 print(f"  {line}")
-            print()
-        
+        print()
+
+        # NEW — Route to correct department
+        print(f"  >>> ROUTING TO DEPARTMENT...")
+        print(f"DEBUG: calling router for txn {index+1}, predicted={predicted}")
+        routing = router.route(transaction, investigation)
+        print(f"  ROUTING DECISION:")
+        for line in routing.split('\n'):
+            if line.strip():
+                print(f"  {line}")
+        print()
+
         # If analyst recommends BLOCK - generate formal alert
         if "BLOCK" in investigation:
             print(f"  >>> GENERATING FORMAL ALERT...")
-            alert= alert_agent.generate_alert(transaction, response, investigation)
+            alert = alert_agent.generate_alert(
+                transaction, response, investigation
+            )
 
             print(f" FORMAL ALERT:")
             print(" " + "=" * 50)
@@ -99,7 +113,7 @@ for index, row in test_df.iterrows():
                 if line.strip():
                     print(f"  {line}")
             print(" " + "=" * 50)
-            print()           
+            print()
 
 
 print("=" * 60)
@@ -107,11 +121,11 @@ total = len(test_df)
 accuracy = round((correct / total) * 100, 1)
 print(f"Results: {correct}/{total} correct ({accuracy}% accuracy)")
 print(f"Wrong: {wrong}/{total}")
-print("=" *60)
+print("=" * 60)
 
 # Detailed Metrics
-fraud_results = [r for r in results if r["actual"]== "FRAUD"]
-legit_results = [r for r in results if r["actual"]== "LEGITIMATE"]
+fraud_results = [r for r in results if r["actual"] == "FRAUD"]
+legit_results = [r for r in results if r["actual"] == "LEGITIMATE"]
 
 true_positives = sum(1 for r in fraud_results if r["predicted"] == "FRAUD")
 false_negatives = sum(1 for r in fraud_results if r["predicted"] == "LEGITIMATE")
@@ -139,7 +153,7 @@ if (true_positives + false_negatives) > 0:
 # print("VOICE INPUT DEMO")
 # print("=" *60)
 
-# # ----------VOICE  INPUT DEMO ----------------------------------------------
+# ----------VOICE  INPUT DEMO ----------------------------------------------
 
 # # Simulate what whisper could transcribe from audio
 # # In production this would come from a real audio file
@@ -195,7 +209,7 @@ if (true_positives + false_negatives) > 0:
 # if "HIGH" in voice_result:
 #     voice_investigation = analyst.investigate(voice_transaction, voice_result)
 #     print("Analyst:", voice_investigation.split('\n')[2])
-    
+#
 #     if "BLOCK" in voice_investigation:
 #         voice_alert = alert_agent.generate_alert(
 #             voice_transaction,
@@ -232,12 +246,12 @@ if (true_positives + false_negatives) > 0:
 #     print("Detector:", image_result.split('\n')[0])
 
 #     if "HIGH" in image_result:
-#         image_investigation = analyst.investigate(image_transaction,image_result)
+#         image_investigation = analyst.investigate(image_transaction, image_result)
 
 #         print("Analyst:", image_investigation.split('\n')[2])
 
 #     if "BLOCK" in image_investigation:
-#         image_alert = alert_agent.generate_alert(image_transaction,image_result,image_investigation)
+#         image_alert = alert_agent.generate_alert(image_transaction, image_result, image_investigation)
 
 #         print("\nFORMAL ALERT GENERATED")
 #         print("=" * 40)
@@ -253,3 +267,4 @@ if (true_positives + false_negatives) > 0:
 agent.status()
 analyst.status()
 alert_agent.status()
+router.status()
