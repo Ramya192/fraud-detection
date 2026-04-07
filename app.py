@@ -4,6 +4,7 @@ from agents.detector_agent import FraudDetectorAgent
 from agents.analyst_agent import AnalystAgent
 from agents.alert_agent import AlertAgent
 from agents.routing_agent import RoutingAgent
+from tools.image_input import ImageInputTool
 from config.settings import MODEL_NAME
 
 # ------------- PAGE CONFIG ------------------------------------
@@ -25,9 +26,10 @@ def load_agents():
     analyst  = AnalystAgent(name="AnalystAgent-1")
     alert    = AlertAgent(name="AlertAgent-1")
     router   = RoutingAgent(name="RoutingAgent-1")
-    return detector, analyst, alert, router
+    image_tool = ImageInputTool()
+    return detector, analyst, alert, router, image_tool
 
-detector, analyst, alert, router = load_agents()
+detector, analyst, alert, router, image_tool = load_agents()
 
 # --------- SIDE BAR -------------------------------------------
 with st.sidebar:
@@ -46,6 +48,12 @@ with st.sidebar:
     st.markdown("- AnalystAgent — investigation")
     st.markdown("- AlertAgent — bank notifications")
     st.markdown("- RoutingAgent — department routing")
+
+    st.divider()
+    st.markdown("**Input Channels:**")
+    st.markdown("- 📂 CSV upload")
+    st.markdown("- ✏️ Manual entry")
+    st.markdown("- 🖼 Receipt / cheque image")
 
     st.divider()
     st.markdown("**Dataset:**")
@@ -67,8 +75,50 @@ context    = (f"Dataset average transaction amount: ${avg_amount:.2f}. "
               f"Maximum amount: ${max_amount:.2f}. "
               f"Typical legitimate transactions range from $5 to $500.")
 
+# ── SHARED PIPELINE HELPER ────────────────────────────────────
+def run_pipeline(transaction):
+    """Runs the full 4-agent pipeline and returns all results."""
+    response      = detector.analyse(transaction, context)
+    parsed        = FraudDetectorAgent.parse_response(response)
+    predicted     = "FRAUD" if FraudDetectorAgent.is_fraud(parsed) else "LEGITIMATE"
+    investigation = ""
+    routing       = ""
+    alert_text    = ""
+
+    if predicted == "FRAUD":
+        investigation = analyst.investigate(transaction, response)
+        routing       = router.route(transaction, investigation)
+        if "BLOCK" in investigation:
+            alert_text = alert.generate_alert(transaction, response, investigation)
+
+    return predicted, parsed, response, investigation, routing, alert_text
+
+# ── SHARED RESULTS DISPLAY HELPER ────────────────────────────
+def show_pipeline_results(predicted, parsed, investigation, routing, alert_text):
+    """Renders the pipeline output expanders."""
+    if predicted == "FRAUD":
+        st.error("🚨 FRAUD DETECTED")
+    else:
+        st.success("✅ LEGITIMATE TRANSACTION")
+
+    with st.expander("🔍 Detector Agent Report", expanded=True):
+        st.text(f"Risk Level : {parsed['risk_level']}")
+        st.text(f"Action     : {parsed['action']}")
+        st.text(f"Reason     : {parsed['reason']}")
+
+    if predicted == "FRAUD":
+        with st.expander("🔬 Analyst Agent Investigation"):
+            st.text(investigation)
+
+        with st.expander("🗺 Routing Decision"):
+            st.text(routing)
+
+        if alert_text:
+            with st.expander("🚨 Formal Bank Alert", expanded=True):
+                st.code(alert_text)
+
 # ── INPUT TABS ────────────────────────────────────────────────
-tab1, tab2 = st.tabs(["📂 Upload CSV", "✏️ Manual Entry"])
+tab1, tab2, tab3 = st.tabs(["📂 Upload CSV", "✏️ Manual Entry", "🖼 Image Input"])
 
 # ── TAB 1: CSV UPLOAD ─────────────────────────────────────────
 with tab1:
@@ -107,28 +157,13 @@ with tab1:
                 status_text.text(f"Analysing transaction {i+1} of {num_txns}...")
                 progress.progress((i + 1) / num_txns)
 
-                response = detector.analyse(transaction, context)
-
-                # ── IMPROVEMENT 4: Robust parsing ──────────────────────
-                parsed    = FraudDetectorAgent.parse_response(response)
-                predicted = "FRAUD" if FraudDetectorAgent.is_fraud(parsed) else "LEGITIMATE"
+                predicted, parsed, response, investigation, routing, alert_text = run_pipeline(transaction)
 
                 actual = None
                 if "is_Fraud" in transaction:
                     actual = "FRAUD" if transaction["is_Fraud"] == 1 else "LEGITIMATE"
                     if predicted == actual:
                         correct += 1
-
-                investigation = ""
-                alert_text    = ""
-                routing       = ""
-                if predicted == "FRAUD":
-                    investigation = analyst.investigate(transaction, response)
-                    routing       = router.route(transaction, investigation)
-                    if "BLOCK" in investigation:
-                        alert_text = alert.generate_alert(
-                            transaction, response, investigation
-                        )
 
                 results.append({
                     "Amount ($)":  transaction.get("Amount", 0),
@@ -203,7 +238,6 @@ with tab2:
     st.subheader("Analyse a single transaction manually")
     st.caption("Enter transaction details to get instant fraud assessment through the full 4-agent pipeline")
 
-    # Reset button — clears session state and reloads defaults
     if st.button("↺ Reset to defaults"):
         for key in ["manual_amount", "manual_hour"]:
             if key in st.session_state:
@@ -243,36 +277,69 @@ with tab2:
         transaction = {"Amount": amount, "hour": hour, "Time": 50000}
 
         with st.spinner("Running through hybrid detection pipeline..."):
-            response = detector.analyse(transaction, context)
+            predicted, parsed, response, investigation, routing, alert_text = run_pipeline(transaction)
 
-            # ── IMPROVEMENT 4: Robust parsing ──────────────────────────
-            parsed    = FraudDetectorAgent.parse_response(response)
-            predicted = "FRAUD" if FraudDetectorAgent.is_fraud(parsed) else "LEGITIMATE"
+        st.divider()
+        show_pipeline_results(predicted, parsed, investigation, routing, alert_text)
 
-            st.divider()
+# ── TAB 3: IMAGE INPUT ────────────────────────────────────────
+with tab3:
+    st.subheader("Analyse a transaction from receipt or cheque image")
+    st.caption("Upload a JPG or PNG image — GPT-4o Vision will extract the transaction amount automatically")
 
-            if predicted == "FRAUD":
-                st.error("🚨 FRAUD DETECTED")
-            else:
-                st.success("✅ LEGITIMATE TRANSACTION")
+    col1, col2 = st.columns([1, 1])
 
-            with st.expander("🔍 Detector Agent Report", expanded=True):
-                st.text(f"Risk Level : {parsed['risk_level']}")
-                st.text(f"Action     : {parsed['action']}")
-                st.text(f"Reason     : {parsed['reason']}")
+    with col1:
+        uploaded_image = st.file_uploader(
+            "Upload receipt or cheque image",
+            type=["jpg", "jpeg", "png", "webp"],
+            key="image_uploader"
+        )
 
-            if predicted == "FRAUD":
-                investigation = analyst.investigate(transaction, response)
-                with st.expander("🔬 Analyst Agent Investigation"):
-                    st.text(investigation)
+    with col2:
+        st.markdown("**Supported image types:**")
+        st.markdown("- 🧾 Store receipts")
+        st.markdown("- 🏦 Bank cheques")
+        st.markdown("- 📄 Payment slips")
+        st.markdown("- 🖨 Transaction printouts")
+        st.info("The amount will be extracted automatically. Hour defaults to 12 (noon) since receipts rarely show time.")
 
-                routing = router.route(transaction, investigation)
-                with st.expander("🗺 Routing Decision"):
-                    st.text(routing)
+    if uploaded_image is not None:
+        # Show the uploaded image
+        st.image(uploaded_image, caption="Uploaded image", use_container_width=True)
+        st.divider()
 
-                if "BLOCK" in investigation:
-                    alert_text = alert.generate_alert(
-                        transaction, response, investigation
-                    )
-                    with st.expander("🚨 Formal Bank Alert", expanded=True):
-                        st.code(alert_text)
+        if st.button("🔍 Extract & Analyse Transaction", type="primary"):
+            with st.spinner("Extracting transaction details from image using GPT-4o Vision..."):
+                try:
+                    # Detect mime type from uploaded file
+                    mime_map = {
+                        "jpg":  "image/jpeg",
+                        "jpeg": "image/jpeg",
+                        "png":  "image/png",
+                        "webp": "image/webp"
+                    }
+                    ext       = uploaded_image.name.split(".")[-1].lower()
+                    mime_type = mime_map.get(ext, "image/jpeg")
+
+                    # Extract transaction from image bytes
+                    image_bytes = uploaded_image.read()
+                    transaction = image_tool.extract_from_bytes(image_bytes, mime_type)
+
+                    # Show extracted details
+                    st.success("✓ Transaction extracted from image")
+                    col1, col2, col3 = st.columns(3)
+                    col1.metric("Amount",  f"${transaction['Amount']:.2f}")
+                    col2.metric("Hour",    f"{transaction['hour']}:00")
+                    col3.metric("Source",  "Image")
+                    st.divider()
+
+                except Exception as e:
+                    st.error(f"Could not extract transaction from image: {e}")
+                    st.info("Please try a clearer image or use Manual Entry instead.")
+                    st.stop()
+
+            with st.spinner("Running through hybrid detection pipeline..."):
+                predicted, parsed, response, investigation, routing, alert_text = run_pipeline(transaction)
+
+            show_pipeline_results(predicted, parsed, investigation, routing, alert_text)
